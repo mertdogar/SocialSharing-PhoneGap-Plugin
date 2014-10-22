@@ -28,6 +28,9 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import android.os.Parcel;
+import android.os.Parcelable;
+
 public class SocialSharing extends CordovaPlugin {
 
   private static final String ACTION_AVAILABLE_EVENT = "available";
@@ -63,7 +66,7 @@ public class SocialSharing extends CordovaPlugin {
     } else if (ACTION_SHARE_VIA_TWITTER_EVENT.equals(action)) {
       return doSendIntent(args.getString(0), args.getString(1), args.getJSONArray(2), args.getString(3), "twitter", false);
     } else if (ACTION_SHARE_VIA_FACEBOOK_EVENT.equals(action)) {
-      return doSendIntent(args.getString(0), args.getString(1), args.getJSONArray(2), args.getString(3), "com.facebook.katana", false);
+      return doSendIntent(null, null, null, args.getString(3), "com.facebook.katana", false);
     } else if (ACTION_SHARE_VIA_WHATSAPP_EVENT.equals(action)) {
       return doSendIntent(args.getString(0), args.getString(1), args.getJSONArray(2), args.getString(3), "whatsapp", false);
     } else if (ACTION_CAN_SHARE_VIA.equals(action)) {
@@ -125,7 +128,7 @@ public class SocialSharing extends CordovaPlugin {
             ArrayList<Uri> fileUris = new ArrayList<Uri>();
             final String dir = getDownloadDir();
             for (int i = 0; i < files.length(); i++) {
-              final Uri fileUri = getFileUriAndSetType(draft, dir, files.getString(i), subject, i);
+              final Uri fileUri = getFileUriAndSetType(draft, dir, files.getString(i), subject);
               if (fileUri != null) {
                 fileUris.add(fileUri);
               }
@@ -161,81 +164,145 @@ public class SocialSharing extends CordovaPlugin {
       public void run() {
         String message = msg;
         final boolean hasMultipleAttachments = files.length() > 1;
-        final Intent sendIntent = new Intent(hasMultipleAttachments ? Intent.ACTION_SEND_MULTIPLE : Intent.ACTION_SEND);
-        sendIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET);
 
-        if (files.length() > 0) {
-          ArrayList<Uri> fileUris = new ArrayList<Uri>();
-          try {
-            final String dir = getDownloadDir();
-            Uri fileUri = null;
-            for (int i = 0; i < files.length(); i++) {
-              fileUri = getFileUriAndSetType(sendIntent, dir, files.getString(i), subject, i);
-              if (fileUri != null) {
-                fileUris.add(fileUri);
-              }
-            }
-            if (!fileUris.isEmpty()) {
-              if (hasMultipleAttachments) {
-                sendIntent.putExtra(Intent.EXTRA_STREAM, fileUris);
-              } else {
-                sendIntent.putExtra(Intent.EXTRA_STREAM, fileUri);
-              }
-            }
-          } catch (Exception e) {
-            callbackContext.error(e.getMessage());
-          }
-        } else {
-          sendIntent.setType("text/plain");
-        }
 
-        if (notEmpty(subject)) {
-          sendIntent.putExtra(Intent.EXTRA_SUBJECT, subject);
-        }
-        // add the URL to the message, as there seems to be no separate field
-        if (notEmpty(url)) {
-          if (notEmpty(message)) {
-            message += " " + url;
-          } else {
-            message = url;
-          }
-        }
-        if (notEmpty(message)) {
-          sendIntent.putExtra(android.content.Intent.EXTRA_TEXT, message);
-        }
+        List<Intent> targetedShareIntents = new ArrayList<Intent>();
+        Intent shareIntent = new Intent(android.content.Intent.ACTION_SEND);
+        shareIntent.setType("text/plain");
+        List<ResolveInfo> resInfo = cordova.getActivity().getPackageManager().queryIntentActivities(shareIntent, 0);
+        if (!resInfo.isEmpty()){
+            if (appPackageName != null) {
 
-        if (appPackageName != null) {
-          String packageName = appPackageName;
-          String passedActivityName = null;
-          if (packageName.contains("/")) {
-            String[] items = appPackageName.split("/");
-            packageName = items[0];
-            passedActivityName = items[1];
-          }
-          final ActivityInfo activity = getActivity(sendIntent, packageName);
-          if (activity != null) {
-            if (peek) {
-              callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK));
+                final Intent sendIntent = new Intent(hasMultipleAttachments ? Intent.ACTION_SEND_MULTIPLE : Intent.ACTION_SEND);
+                sendIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET);
+
+                if (files.length() > 0) {
+                    ArrayList<Uri> fileUris = new ArrayList<Uri>();
+                    try {
+                        final String dir = getDownloadDir();
+                        Uri fileUri = null;
+                        for (int i = 0; i < files.length(); i++) {
+                            fileUri = getFileUriAndSetType(sendIntent, dir, files.getString(i), subject);
+                            if (fileUri != null) {
+                                fileUris.add(fileUri);
+                            }
+                        }
+
+                        if (!fileUris.isEmpty()) {
+                            if (hasMultipleAttachments) {
+                                sendIntent.putExtra(Intent.EXTRA_STREAM, fileUris);
+                            } else {
+                                sendIntent.putExtra(Intent.EXTRA_STREAM, fileUri);
+                            }
+                        }
+                    } catch (Exception e) {
+                        callbackContext.error(e.getMessage());
+                    }
+                } else {
+                    sendIntent.setType("text/plain");
+                }
+
+                if (notEmpty(subject)) {
+                    sendIntent.putExtra(Intent.EXTRA_SUBJECT, subject);
+                }
+
+                // add the URL to the message, as there seems to be no separate field
+                if (notEmpty(url)) {
+                    if (notEmpty(message)) {
+                        message += " " + url;
+                    } else {
+                        message = url;
+                    }
+                }
+
+                if (notEmpty(message)) {
+                    sendIntent.putExtra(android.content.Intent.EXTRA_TEXT, message);
+                }
+
+                String packageName = appPackageName;
+                String passedActivityName = null;
+                if (packageName.contains("/")) {
+                    String[] items = appPackageName.split("/");
+                    packageName = items[0];
+                    passedActivityName = items[1];
+                }
+                final ActivityInfo activity = getActivity(sendIntent, packageName);
+                if (activity != null) {
+                    if (peek) {
+                        callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK));
+                    } else {
+                        sendIntent.addCategory(Intent.CATEGORY_LAUNCHER);
+                        sendIntent.setComponent(new ComponentName(activity.applicationInfo.packageName,
+                        passedActivityName != null ? passedActivityName : activity.name));
+                        mycordova.startActivityForResult(plugin, sendIntent, 0);
+                    }
+                }
             } else {
-              sendIntent.addCategory(Intent.CATEGORY_LAUNCHER);
-              sendIntent.setComponent(new ComponentName(activity.applicationInfo.packageName,
-                  passedActivityName != null ? passedActivityName : activity.name));
-              mycordova.startActivityForResult(plugin, sendIntent, 0);
+                for (ResolveInfo resolveInfo : resInfo) {
+                    String packageName = resolveInfo.activityInfo.packageName;
+
+                    Intent targetedShareIntent;
+
+                    if (packageName.equals("com.facebook.katana")){
+                        targetedShareIntent = new Intent(android.content.Intent.ACTION_SEND);
+                        targetedShareIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET);
+
+                        targetedShareIntent.setType("text/plain");
+                        targetedShareIntent.putExtra(android.content.Intent.EXTRA_TEXT, url);
+                    } else {
+                        targetedShareIntent = new Intent(hasMultipleAttachments ? Intent.ACTION_SEND_MULTIPLE : Intent.ACTION_SEND);
+                        targetedShareIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET);
+
+                        targetedShareIntent.setType("text/plain");
+
+                        if (notEmpty(subject)) {
+                            targetedShareIntent.putExtra(Intent.EXTRA_SUBJECT, subject);
+                        }
+
+                        String msg = "";
+
+                        // add the URL to the message, as there seems to be no separate field
+                        if (notEmpty(url)) {
+                            if (notEmpty(message)) {
+                                // Trim twitter messages.
+                                if (packageName.equals("com.twitter.android") && message.length() > 90 ) {
+                                    msg = message.substring(0, 89) + "... " + url;
+                                } else {
+                                    msg = message + " " + url;
+                                }
+                            } else {
+                                msg = url;
+                            }
+                        }
+
+                        if (notEmpty(msg)) {
+                            targetedShareIntent.putExtra(android.content.Intent.EXTRA_TEXT, msg);
+                        }
+
+                    }
+
+                    targetedShareIntent.setPackage(packageName);
+                    targetedShareIntents.add(targetedShareIntent);
+                }
+
+
+                if (peek) {
+                    callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK));
+                } else {
+                    Intent chooserIntent = Intent.createChooser(targetedShareIntents.remove(0), "Select app to share");
+                    chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, targetedShareIntents.toArray(new Parcelable[]{}));
+                    mycordova.startActivityForResult(plugin, chooserIntent, 1);
+                }
             }
-          }
-        } else {
-          if (peek) {
-            callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK));
-          } else {
-            mycordova.startActivityForResult(plugin, Intent.createChooser(sendIntent, null), 1);
-          }
+
         }
       }
     });
     return true;
   }
 
-  private Uri getFileUriAndSetType(Intent sendIntent, String dir, String image, String subject, int nthFile) throws IOException {
+
+  private Uri getFileUriAndSetType(Intent sendIntent, String dir, String image, String subject) throws IOException {
     // we're assuming an image, but this can be any filetype you like
     String localImage = image;
     sendIntent.setType("image/*");
@@ -275,8 +342,7 @@ public class SocialSharing extends CordovaPlugin {
       String fileName = "file." + imgExtension;
       // if a subject was passed, use it as the filename
       if (notEmpty(subject)) {
-        // filenames must be unique when passing in multiple files [#158]
-        fileName = sanitizeFilename(subject) + (nthFile == 0 ? "" : "_"+nthFile) + "." + imgExtension;
+        fileName = sanitizeFilename(subject) + "." + imgExtension;
       }
       saveFile(Base64.decode(encodedImg, Base64.DEFAULT), dir, fileName);
       localImage = "file://" + dir + "/" + fileName;
